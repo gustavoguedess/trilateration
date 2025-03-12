@@ -30,6 +30,8 @@ def get_diff_time():
 def main():
     state = get_initial_trilateration()
     ekf.init_state(state['x'], state['y'], state['theta'])
+    last_gt = st.get_data()['ground_truth']
+    last_gt = [last_gt['x'], last_gt['y'], last_gt['theta']]
 
     print_state(state, 'First ')
     print()
@@ -40,7 +42,6 @@ def main():
         acm_time+=time_diff
 
         velocity_amr = odometry.calc_amr_velocity(
-            time = time_diff,
             enc1 = input_data['ground_truth']['u1'],
             enc2 = input_data['ground_truth']['u2'],
             enc3 = input_data['ground_truth']['u3'],
@@ -48,29 +49,33 @@ def main():
         )
         velocity = odometry.calc_velocity(velocity_amr, input_data['ground_truth']['theta'])
 
+        gt = [input_data['ground_truth']['x'], input_data['ground_truth']['y'], input_data['ground_truth']['theta']]
+        gt_velocity = odometry.calc_velocity_ground_truth(last_gt, gt, time_diff)
+        last_gt = gt
+
         # EKF Predict
         predict_state = ekf.predict(
             state = state,
-            state_diff = velocity*time_diff,
+            state_variation = velocity*time_diff,
         )
 
         tril_state = tril.calc_trilateration(input_data['raw_lidar'], last_trilateration=state)
 
-        if acm_time > 0.05:
-            state = ekf.correct (
-                predict_state = predict_state,
-                tril_state = tril_state,
-            )
-            acm_time = 0
-        else:
-            state = predict_state
-        
+        # if acm_time > 0.05:
+        #     state = ekf.correct (
+        #         predict_state = predict_state,
+        #         tril_state = tril_state,
+        #     )
+        #     acm_time = 0
+        # else:
+        #     state = predict_state
+
         # Print data to DEBUG
         print_time_diff(time_diff)
         print_state_error(state, input_data['ground_truth'], 'Trilateration')
         print_encoders(input_data['ground_truth'])
         print_velocity(velocity_amr, 'AMR')
-        print_velocity(velocity, 'Abs')
+        print_velocity(velocity, 'Abs', ground_truth=gt_velocity)
 
         print()
 
@@ -100,12 +105,19 @@ def print_state_error(state, ground_truth, name=''):
         print(f'{name} ', end='')
     print(f'Error: x={x_error:.4f}, y={y_error:.4f}, theta={theta_error:.2f}')
 
-def print_velocity(velocity, name=''):
+def print_velocity(velocity, name='', ground_truth=None):
     x, y, theta = velocity
 
     if name:
         print(f'{name} ', end='')
-    print(f'Velocity: x={x: .4f}, y={y: .4f}, theta={theta: .2f}')
+    print(f'Velocity: x={x: .4f}, y={y: .4f}, theta={theta: .2f}', end='')
+
+    if ground_truth:
+        x_error = abs(velocity[0] - ground_truth[0])
+        y_error = abs(velocity[1] - ground_truth[1])
+        theta_error = abs(velocity[2] - ground_truth[2])
+        print(f'    Error: x={x_error:.4f}, y={y_error:.4f}, theta={theta_error:.2f}', end='')
+    print()
 
 def print_encoders(ground_truth):
     u1 = ground_truth['u1']

@@ -47,21 +47,36 @@ def init_state(x, y, theta):
     # Define the identity matrix I
     identity_matrix = np.identity(3)
 
-def predict(state, state_diff):
-    global error_covariance
-    global error_covariance_predict
+def predict(state, state_variation):
+    global error_covariance         # P
+    global error_covariance_predict # P'
+    global jacobian_matrix          # A
     
+    # Convert the states to numpy arrays
     state = np.matrix([state['x'], state['y'], state['theta']]).T
-    state_diff = np.matrix([state_diff[0], state_diff[1], state_diff[2]]).T
+    state_variation = np.matrix([state_variation[0], state_variation[1], state_variation[2]]).T
+
+    # Extract the values for the jacobian matrix
+    theta = state[2, 0] # theta
+    delta_x = state_variation[0, 0] # delta_x
+    delta_y = state_variation[1, 0] # delta_y
+
+    # calc the jacobian matrix A
+    jacobian_matrix = np.matrix([
+        [1, 0, -delta_x*np.sin(theta)+delta_y*np.cos(theta)],
+        [0, 1, delta_x*np.cos(theta)-delta_y*np.sin(theta)],
+        [0, 0, 1]
+    ])
 
     #TODO: Check if this is correct.    
-    # Predict the next state
+    # Predict the next state. what is B*u?
     # x' = A*x + B*u
-    predict_state = transiction_matrix @ state + state_diff
+    predict_state = jacobian_matrix @ state #+ B*u?+
 
     # Predict the next error covariance
     # P' = A*P*A.T + Q
     error_covariance_predict = transiction_matrix @ error_covariance @ transiction_matrix.T + process_noise
+
 
     predict_state = {'x': predict_state[0, 0], 'y': predict_state[1, 0], 'theta': predict_state[2, 0]}
     return predict_state
@@ -70,7 +85,6 @@ def correct(predict_state, tril_state):
     global error_covariance         # P
     global error_covariance_predict # P'
     global measurement_noise        # R
-    global observation_matrix       # H
     global identity_matrix          # I
 
     # Convert the states to numpy arrays
