@@ -1,6 +1,7 @@
 import json
 import numpy as np
 import math
+import amr_params as amr
 
 OUTLIER_MIN_DIST = 0.05
 OUTLIER_MAX_DIST = 2
@@ -8,16 +9,10 @@ OUTLIER_MAX_DIST = 2
 LIMIT_DIFF_OBJECT = 0.2 # Maximum difference between two samples to consider them as the same object
 LIMIT_GAP = 3 # Number of samples between two objects to consider them as the same object
 
-AGV_LEFT_X = - 1.7/2 - 0.05
-AGV_RIGHT_X = 1.7/2 + 0.05
-AGV_UPPER_Y = 1.2/2 + 0.05
-AGV_BOTTOM_Y = - 1.2/2 - 0.05
-
 BEACON_RADIUS = 0.055
 
 
 def calc_trilateration(data, last_trilateration):
-    
     # Remove outliers
     data = remove_outliers(data)
     if not any(data): raise Exception('There are no valid data')
@@ -133,10 +128,10 @@ def get_beacons(objs, last_trilateration):
 
 def calc_beacons(trilateration):
     beacons = {
-        'beacon1': calc_beacon(trilateration, AGV_LEFT_X, AGV_UPPER_Y),
-        'beacon2': calc_beacon(trilateration, AGV_LEFT_X, AGV_BOTTOM_Y),
-        'beacon3': calc_beacon(trilateration, AGV_RIGHT_X, AGV_BOTTOM_Y),
-        'beacon4': calc_beacon(trilateration, AGV_RIGHT_X, AGV_UPPER_Y),
+        'beacon1': calc_beacon(trilateration, amr.WHEELS_LEFT_X, amr.WHEELS_UPPER_Y),
+        'beacon2': calc_beacon(trilateration, amr.WHEELS_LEFT_X, amr.WHEELS_BOTTOM_Y),
+        'beacon3': calc_beacon(trilateration, amr.WHEELS_RIGHT_X, amr.WHEELS_BOTTOM_Y),
+        'beacon4': calc_beacon(trilateration, amr.WHEELS_RIGHT_X, amr.WHEELS_UPPER_Y),
     }
     return beacons
 
