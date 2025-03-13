@@ -11,6 +11,9 @@ LIMIT_GAP = 3 # Number of samples between two objects to consider them as the sa
 
 BEACON_RADIUS = 0.055
 
+X = 0
+Y = 1
+THETA = 2
 
 def calc_trilateration(data, last_state):
     # Remove outliers
@@ -28,6 +31,8 @@ def calc_trilateration(data, last_state):
     # Get position and angle from beacons
     x,y = get_position(beacons)
     theta = calc_theta(beacons)
+
+    return np.array([x, y, theta]).T
 
     trilateration = {
         'x': x,
@@ -109,8 +114,8 @@ def get_distance_group(data, start, end):
 
 
 ##### GETTING BEACONS #####
-def get_beacons(objs, last_trilateration):
-    last_beacons = calc_beacons(last_trilateration)
+def get_beacons(objs, last_state):
+    last_beacons = calc_beacons(last_state)
 
     beacons = {
         'beacon1': get_similar_beacon(objs, last_beacons['beacon1']),
@@ -126,30 +131,33 @@ def get_beacons(objs, last_trilateration):
 
     return beacons
 
-def calc_beacons(trilateration):
+def calc_beacons(state):
     beacons = {
-        'beacon1': calc_beacon(trilateration, amr.WHEELS_LEFT_X, amr.WHEELS_UPPER_Y),
-        'beacon2': calc_beacon(trilateration, amr.WHEELS_LEFT_X, amr.WHEELS_BOTTOM_Y),
-        'beacon3': calc_beacon(trilateration, amr.WHEELS_RIGHT_X, amr.WHEELS_BOTTOM_Y),
-        'beacon4': calc_beacon(trilateration, amr.WHEELS_RIGHT_X, amr.WHEELS_UPPER_Y),
+        'beacon1': calc_beacon(state, amr.WHEELS_LEFT_X, amr.WHEELS_UPPER_Y),
+        'beacon2': calc_beacon(state, amr.WHEELS_LEFT_X, amr.WHEELS_BOTTOM_Y),
+        'beacon3': calc_beacon(state, amr.WHEELS_RIGHT_X, amr.WHEELS_BOTTOM_Y),
+        'beacon4': calc_beacon(state, amr.WHEELS_RIGHT_X, amr.WHEELS_UPPER_Y),
     }
     return beacons
 
-def calc_beacon(trilateration, bx, by):
+def calc_beacon(state, bx, by):
     return {
         'x': bx,
         'y': by,
-        'phi': np.degrees(calc_phi(trilateration, bx, by)),
-        'distance': euclidean_distance(trilateration['x'], trilateration['y'], bx, by),
+        'phi': calc_phi(state, bx, by),
+        'distance': euclidean_distance(state[X], state[Y], bx, by),
     }
 
 # Calculate the phi angle in radians between the trilateration and the beacon. The angle is between 0 and 2pi
 def calc_phi(trilateration, bx, by):
-    dy = by - trilateration['y']
-    dx = bx - trilateration['x']
-    gamma = math.atan2(dy, dx)
-    theta = trilateration['theta'] if trilateration['theta'] >= 0 else 360 + trilateration['theta']
-    theta = math.radians(theta)
+    dy = by - trilateration[Y]
+    dx = bx - trilateration[X]
+    theta = trilateration[THETA]
+    
+    gamma = np.arctan2(dy, dx)
+    # theta = trilateration['theta'] if trilateration['theta'] >= 0 else 360 + trilateration['theta']
+    # theta = math.radians(theta)
+
     phi = diff_angle(gamma, theta)
     phi = (phi + 2 * np.pi) % (2 * np.pi)
     return phi
@@ -157,8 +165,12 @@ def calc_phi(trilateration, bx, by):
 
 # Return the difference between two angles in radians (-pi, pi)
 def diff_angle(angle1, angle2):
-    diff = (angle1 - angle2 + 2 * np.pi) % (2 * np.pi)
-    if diff > np.pi:
+    diff = angle1 - angle2
+    
+    # Normalize the difference
+    if diff < -np.pi:
+        diff += 2 * np.pi
+    elif diff > np.pi:
         diff -= 2 * np.pi
     return diff
 
@@ -202,7 +214,7 @@ def error_distance_beacon(distance):
 
 #TODO: Improve this function
 def error_phi_beacon(phi):
-    return 15
+    return np.radians(15) # 15 degrees in radians of error
 
 def obj_to_beacon(obj, last_beacon):
     phi = np.degrees(circular_mean([np.radians(obj['start']), np.radians(obj['end'])]))
@@ -216,7 +228,7 @@ def obj_to_beacon(obj, last_beacon):
     return {
         'x': last_beacon['x'],
         'y': last_beacon['y'],
-        'phi': phi,
+        'phi': phi_rad, # in radians
         'distance': distance,
     }
 
@@ -287,17 +299,17 @@ def calc_theta(beacons):
     dist_4 = beacons['beacon4']['distance'] if 'distance' in beacons['beacon4'] else 0
 
     # phi
-    phi_1 = np.radians(beacons['beacon1']['phi']) if 'phi' in beacons['beacon1'] else 0
-    phi_2 = np.radians(beacons['beacon2']['phi']) if 'phi' in beacons['beacon2'] else 0
-    phi_3 = np.radians(beacons['beacon3']['phi']) if 'phi' in beacons['beacon3'] else 0
-    phi_4 = np.radians(beacons['beacon4']['phi']) if 'phi' in beacons['beacon4'] else 0
+    phi_1 = beacons['beacon1']['phi'] if 'phi' in beacons['beacon1'] else 0
+    phi_2 = beacons['beacon2']['phi'] if 'phi' in beacons['beacon2'] else 0
+    phi_3 = beacons['beacon3']['phi'] if 'phi' in beacons['beacon3'] else 0
+    phi_4 = beacons['beacon4']['phi'] if 'phi' in beacons['beacon4'] else 0
 
     # diff phi between beacons
     delta_12 = diff_angle(phi_2, phi_1)
     delta_23 = diff_angle(phi_3, phi_2)
     delta_34 = diff_angle(phi_4, phi_3)
     delta_41 = diff_angle(phi_1, phi_4)
-    
+
     # gamma
     b1_gamma   =  (np.pi/2   + asin( np.sin(delta_12) * dist_2 / dist_12 ) ) % (2*np.pi)
     b2_gamma   =  (np.pi     + asin( np.sin(delta_23) * dist_3 / dist_23 ) ) % (2*np.pi)
@@ -320,14 +332,13 @@ def calc_theta(beacons):
     
     theta_list = [b1_theta, b2_theta, b3_theta, b4_theta, b1_theta_l, b2_theta_l, b3_theta_l, b4_theta_l]
 
-    theta_rad = circular_mean(theta_list)
+    theta = circular_mean(theta_list)
 
-    theta_degree = np.degrees(theta_rad)
+    # Normalize to [-np.pi, np.pi]
+    theta = (theta + 2 * np.pi) % (2 * np.pi)
+    if theta > np.pi:
+        theta = theta - 2 * np.pi
 
-    theta = theta_degree if theta_degree < 180 else theta_degree - 360
-
-    if theta is None: 
-        return None
     return theta
 
 

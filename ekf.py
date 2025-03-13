@@ -1,7 +1,10 @@
 import numpy as np 
 
-def init_state(x, y, theta):
-    global state                    # x, y, theta
+X = 0
+Y = 1
+THETA = 2
+
+def init_state():
     global transiction_matrix       # A
     global error_covariance         # P
     global error_covariance_predict # P'
@@ -9,13 +12,19 @@ def init_state(x, y, theta):
     global measurement_noise        # R
     global observation_matrix       # H
     global identity_matrix          # I
-
-    state = np.array([x, y, theta])
+    global control_matrix           # B
 
     # Define the transiction matrix A
-    transiction_matrix = np.matrix([
+    transiction_matrix = np.array([
         [1, 0, 0],
         [0, 1, 0],
+        [0, 0, 1]
+    ])
+
+    # Define the control matrix B
+    control_matrix = np.array([
+        [0, 0, 0],
+        [0, 0, 0],
         [0, 0, 1]
     ])
 
@@ -23,14 +32,14 @@ def init_state(x, y, theta):
     error_covariance = np.identity(3)
 
     # Define the process noise Q
-    process_noise = np.matrix([
+    process_noise = np.array([
         [0.01, 0, 0],
         [0, 0.01, 0],
         [0, 0, 0.01]
     ])
 
     # Define the measurement noise R
-    measurement_noise = np.matrix([
+    measurement_noise = np.array([
         [0.1, 0, 0],
         [0, 0.1, 0],
         [0, 0, 0.1]
@@ -38,7 +47,7 @@ def init_state(x, y, theta):
 
     #TODO: calculate the observation matrix H
     # Define the observation matrix H
-    observation_matrix = np.matrix([
+    observation_matrix = np.array([
         [1, 0, 0],
         [0, 1, 0],
         [0, 0, 1]
@@ -47,38 +56,26 @@ def init_state(x, y, theta):
     # Define the identity matrix I
     identity_matrix = np.identity(3)
 
-def predict(state, state_variation):
+def predict(state, delta_state):
     global error_covariance         # P
     global error_covariance_predict # P'
     global jacobian_matrix          # A
-    
-    # Convert the states to numpy arrays
-    state = np.matrix([state['x'], state['y'], state['theta']]).T
-    state_variation = np.matrix([state_variation[0], state_variation[1], state_variation[2]]).T
-
-    # Extract the values for the jacobian matrix
-    theta = state[2, 0] # theta
-    delta_x = state_variation[0, 0] # delta_x
-    delta_y = state_variation[1, 0] # delta_y
 
     # calc the jacobian matrix A
-    jacobian_matrix = np.matrix([
-        [1, 0, -delta_x*np.sin(theta)+delta_y*np.cos(theta)],
-        [0, 1, delta_x*np.cos(theta)-delta_y*np.sin(theta)],
+    jacobian_matrix = np.array([
+        [1, 0, -delta_state[X]*np.sin(state[THETA])+delta_state[Y]*np.cos(state[THETA])],
+        [0, 1, delta_state[X]*np.cos(state[THETA])-delta_state[Y]*np.sin(state[THETA])],
         [0, 0, 1]
     ])
-
-    #TODO: Check if this is correct.    
-    # Predict the next state. what is B*u?
+       
+    # Predict the next state
     # x' = A*x + B*u
-    predict_state = jacobian_matrix @ state #+ B*u?+
+    predict_state = jacobian_matrix @ state + control_matrix @ delta_state
 
     # Predict the next error covariance
     # P' = A*P*A.T + Q
     error_covariance_predict = transiction_matrix @ error_covariance @ transiction_matrix.T + process_noise
 
-
-    predict_state = {'x': predict_state[0, 0], 'y': predict_state[1, 0], 'theta': predict_state[2, 0]}
     return predict_state
 
 def correct(predict_state, tril_state):
@@ -88,8 +85,8 @@ def correct(predict_state, tril_state):
     global identity_matrix          # I
 
     # Convert the states to numpy arrays
-    predict_state = np.matrix([predict_state['x'], predict_state['y'], predict_state['theta']]).T
-    tril_state = np.matrix([tril_state['x'], tril_state['y'], tril_state['theta']]).T
+    predict_state = np.array([predict_state['x'], predict_state['y'], predict_state['theta']]).T
+    tril_state = np.array([tril_state['x'], tril_state['y'], tril_state['theta']]).T
     
     # Calculate the Kalman Gain K
     # K = P' * H.T * (H * P' * H.T + R)^-1
