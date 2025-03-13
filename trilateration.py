@@ -12,7 +12,7 @@ LIMIT_GAP = 3 # Number of samples between two objects to consider them as the sa
 BEACON_RADIUS = 0.055
 
 
-def calc_trilateration(data, last_trilateration):
+def calc_trilateration(data, last_state):
     # Remove outliers
     data = remove_outliers(data)
     if not any(data): raise Exception('There are no valid data')
@@ -21,7 +21,7 @@ def calc_trilateration(data, last_trilateration):
     objs_groups = group_data(data)
 
     # Get beacons
-    beacons = get_beacons(objs_groups, last_trilateration)
+    beacons = get_beacons(objs_groups, last_state)
 
     if len(beacons) < 3: raise Exception('There are not enough beacons')
 
@@ -329,3 +329,14 @@ def calc_theta(beacons):
     if theta is None: 
         return None
     return theta
+
+
+def state2array(state):
+    return np.array([state['x'], state['y'], state['theta']*np.pi/180])
+
+def array2state(array):
+    return {
+        'x': array[0],
+        'y': array[1],
+        'theta': array[2]*180/np.pi,
+    }
