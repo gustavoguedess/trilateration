@@ -56,21 +56,20 @@ def init_state():
     # Define the identity matrix I
     identity_matrix = np.identity(3)
 
-def predict(state, delta_state):
-    global error_covariance         # P
+def predict(state, state_increment):
     global error_covariance_predict # P'
-    global jacobian_matrix          # A
 
     # calc the jacobian matrix A
     jacobian_matrix = np.array([
-        [1, 0, -delta_state[X]*np.sin(state[THETA])+delta_state[Y]*np.cos(state[THETA])],
-        [0, 1, delta_state[X]*np.cos(state[THETA])-delta_state[Y]*np.sin(state[THETA])],
+        [1, 0, -state_increment[X]*np.sin(state[THETA])+state_increment[Y]*np.cos(state[THETA])],
+        [0, 1, state_increment[X]*np.cos(state[THETA])-state_increment[Y]*np.sin(state[THETA])],
         [0, 0, 1]
     ])
        
     # Predict the next state
     # x' = A*x + B*u
-    predict_state = jacobian_matrix @ state + control_matrix @ delta_state
+    predict_state = jacobian_matrix @ state + control_matrix @ state_increment
+    predict_state[2] = np.mod(predict_state[2] + 2*np.pi, 4*np.pi) - 2*np.pi # Normalize theta to [-2pi, 2pi]
 
     # Predict the next error covariance
     # P' = A*P*A.T + Q
@@ -80,28 +79,17 @@ def predict(state, delta_state):
 
 def correct(predict_state, tril_state):
     global error_covariance         # P
-    global error_covariance_predict # P'
-    global measurement_noise        # R
-    global identity_matrix          # I
-
-    # Convert the states to numpy arrays
-    predict_state = np.array([predict_state['x'], predict_state['y'], predict_state['theta']]).T
-    tril_state = np.array([tril_state['x'], tril_state['y'], tril_state['theta']]).T
     
     # Calculate the Kalman Gain K
     # K = P' * H.T * (H * P' * H.T + R)^-1
     kalman_gain = error_covariance_predict @ observation_matrix.T @ np.linalg.inv(observation_matrix @ error_covariance_predict @ observation_matrix.T + measurement_noise)
     
-    # breakpoint()
-    #TODO: Check if this is correct. Should it be done without z? What does z even mean?
     # Update estimate
-    # x = x + K * (- H * x)
-    state = predict_state + kalman_gain @ (-observation_matrix @ predict_state)
+    # x = x' + K * (z - H * x)
+    state = predict_state + kalman_gain @ ( tril_state - observation_matrix @ predict_state)
 
     # Update the error covariance
     # P = (I - K * H) * P'
     error_covariance = (identity_matrix - kalman_gain @ observation_matrix) @ error_covariance_predict
     
-    # Convert the state back to a dictionary
-    state = {'x': state[0, 0], 'y': state[1, 0], 'theta': state[2, 0]}
     return state

@@ -1,6 +1,7 @@
 from functions.client_udp import ClientUDP
 import json
 import numpy as np
+import functions.utils as utils
 
 class SimTwo:
     def __init__(self):
@@ -26,14 +27,23 @@ class SimTwo:
         }
         return data
     
+    ##### Convertion functions #####
     def state2array(self, data):
-        x, y, theta = data['x'], data['y'], data['theta']*np.pi/180
+        x, y, theta = data['x'], data['y'], utils.degree2radian(data['theta'])
         return np.array([x, y, theta]).T
     
+    def array2state(self, array):
+        return {
+            'x': array[0],
+            'y': array[1],
+            'theta': utils.radian2degree(array[2])
+        }
+
     def encoders2array(self, data):
         u1, u2, u3, u4 = data['u1'], data['u2'], data['u3'], data['u4']
         return np.array([u1, u2, u3, u4]).T
     
+    ################################
     def get_lidar_data(self):
         msg = self.client.recv()
         data = self.convert_msg(msg)
