@@ -29,14 +29,14 @@ class SimTwo:
     
     ##### Convertion functions #####
     def state2array(self, data):
-        x, y, theta = data['x'], data['y'], utils.degree2radian(data['theta'])
+        x, y, theta = data['x'], data['y'], utils.radians(data['theta'], normalize='pi')
         return np.array([x, y, theta]).T
     
     def array2state(self, array):
         return {
             'x': array[0],
             'y': array[1],
-            'theta': utils.radian2degree(array[2])
+            'theta': utils.radians(array[2], normalize='pi')
         }
 
     def encoders2array(self, data):

@@ -42,19 +42,26 @@ def main():
     state = get_initial_state()
     last_gt = state.copy()
     ekf.init_state()
+    tril.init_log()
 
     tril_state = state.copy()
     ekf_state = state.copy()
-    acm_state = state.copy()*0
+    acm_state = state.copy()
 
     acm_time = 0
     while input_data := st.get_data():
         time_diff = get_diff_time()
         acm_time+=time_diff
+        
+        #TODO DEBUG
+        ground_truth = st.state2array(input_data['ground_truth'])
+        print_state(ground_truth, 'Ground truth ', ground_truth=True)
 
         # Get data
         data_lidar = input_data['raw_lidar']
         encoders = st.encoders2array(input_data['ground_truth'])
+
+        tril_state = tril.calc_trilateration(data_lidar, last_state=state)
 
         # # Calculate relative velocity of AMR
         # velocity_amr = odometry.calc_amr_velocity(encoders = encoders)
@@ -69,61 +76,69 @@ def main():
         )
         acm_state += state_increment
 
+        
+
         # EKF Predict
-        predict_state = ekf.predict(
-            state = state,
-            state_increment = state_increment,
-        )
+        # predict_state = ekf.predict(
+        #     state = state,
+        #     state_increment = state_increment,
+        # )
 
         # Sync with LIDAR
-        if acm_time > amr.LIDAR_PERIOD and False:
+        # if acm_time > amr.LIDAR_PERIOD and False:
             
-            # Trilateration
-            tril_state = tril.calc_trilateration(data_lidar, last_state=state)
+        #     # Trilateration
+        #     tril_state = tril.calc_trilateration(data_lidar, last_state=state)
 
-            # EKF Correct
-            ekf_state = ekf.correct (
-                predict_state = predict_state,
-                tril_state = tril_state,
-            )
-            state = ekf_state
+        #     # EKF Correct
+        #     ekf_state = ekf.correct (
+        #         predict_state = predict_state,
+        #         tril_state = tril_state,
+        #     )
+        #     state = ekf_state
 
-            acm_time = 0
-        else:
-            state = predict_state
+        #     acm_time = 0
+        # else:
+        #     state = predict_state
 
-        ground_truth = st.state2array(input_data['ground_truth'])
-        print_debug(time_diff, ground_truth, encoders, state_increment, acm_state, tril_state, predict_state, ekf_state, state)
-
-
-def print_debug(time_diff, ground_truth, encoders, state_increment, acm_state, tril_state, predict_state, ekf_state, state):
-    print_clear_last_line(n=30)
-    # Print data to DEBUG
-    print_time_diff(time_diff)
-    print()
-    print('AMR')
-    print_encoders(encoders)
-    print_state(state_increment, 'Increment    ')
-    print_state(acm_state, 'Accumulated  ')
-    print_state_error(acm_state, ground_truth, '      ')
-    print()
     
-    print('State')
-    print_state(ground_truth, 'Ground truth ', ground_truth=True)
-    print_state(tril_state, 'Trilateration')
-    print_state_error(tril_state, ground_truth, '      ')
-    print()
-    print_state(predict_state, 'Predicted    ')
-    print_state_error(predict_state, ground_truth, '      ')
-    print()
-    print_state(ekf_state, 'Corrected    ')
-    print_state_error(ekf_state, ground_truth, '      ')
-    print()
-    print()
+        state = tril_state.copy()
 
-    print_state(state, '             ')
-    print_state_error(state, ground_truth, '      ')
-    print()
+        #TODO: debug Print groud_truth 
+        ground_truth = st.state2array(input_data['ground_truth'])
+        # print_debug(time_diff, ground_truth, encoders, state_increment, acm_state, tril_state, predict_state, ekf_state, state)
+        
+        print_clear_last_line(n=20)
+        
+        # Print data to DEBUG
+        # print_time_diff(time_diff)
+        # print()
+        # print('AMR')
+        # print_encoders(encoders)
+        # print_state(state_increment, 'Increment    ')
+        # print_state(acm_state, 'Accumulated  ')
+        # print_state_error(acm_state, ground_truth, '      ')
+        # print()
+        
+        print('State')
+        print_state(ground_truth, 'Ground truth ', ground_truth=True)
+        print_state(tril_state, 'Trilateration')
+        print_state_error(tril_state, ground_truth, '      ')
+        print()
+        # print_state(ground_truth, 'Ground truth ', ground_truth=True)
+        # print_state(predict_state, 'Predicted    ')
+        # print_state_error(predict_state, ground_truth, '      ')
+        # print()
+        # print_state(ground_truth, 'Ground truth ', ground_truth=True)
+        # print_state(ekf_state, 'Corrected    ')
+        # print_state_error(ekf_state, ground_truth, '      ')
+        # print()
+        # print()
+
+        # print_state(ground_truth, 'Ground truth ', ground_truth=True)
+        # print_state(state, '             ')
+        # print_state_error(state, ground_truth, '      ')
+        # print()
 
 
 
@@ -137,13 +152,13 @@ def print_state(state, name='', ground_truth=False):
         print(f'{COLOUR_GREEN}', end='')
     if name:
         print(f'{name} ', end='')
-    print(f'x={x: .4f}, y={y: .4f}, theta={theta: .2f} ({np.rad2deg(theta):7.2f}°){COLOUR_RESET}')
+    print(f'({x: .4f}, {y: .4f}), theta={theta: .2f} ({np.rad2deg(theta):7.2f}°){COLOUR_RESET}')
 
 
 def print_state_error(state, ground_truth, name=''):
     x_error = abs(state[X] - ground_truth[X])
     y_error = abs(state[Y] - ground_truth[Y])
-    theta_error = utils.min_angle_diff(state[THETA], ground_truth[THETA])
+    theta_error = utils.angle_diff(state[THETA], ground_truth[THETA])
 
     print(f'{COLOUR_BROWN}', end='')
     if name:
@@ -162,7 +177,7 @@ def print_velocity(velocity, name='', ground_truth=None):
 def print_velocity_error(velocity, ground_truth):
     x_error = abs(velocity[X] - ground_truth[X])
     y_error = abs(velocity[Y] - ground_truth[Y])
-    theta_error = utils.min_angle_diff(velocity[THETA], ground_truth[THETA])
+    theta_error = utils.angle_diff(velocity[THETA], ground_truth[THETA])
     degree = np.rad2deg(theta_error)
     print(f'{COLOUR_BROWN}Error         x={x_error: .4f}, y={y_error: .4f}, theta={theta_error: .2f} ({degree:7.2f}°){COLOUR_RESET}')
 

@@ -2,6 +2,7 @@ import json
 import numpy as np
 import math
 import amr_params as amr
+import functions.utils as utils
 
 OUTLIER_MIN_DIST = 0.05
 OUTLIER_MAX_DIST = 2
@@ -15,6 +16,16 @@ X = 0
 Y = 1
 THETA = 2
 
+def print_objs(objs):
+    for obj in objs:
+        print(f"Object detected: {obj['middle_angle']:0.3f} ({utils.degrees(obj['middle_angle']):0.1f}º) {obj['distance']:0.2f}")
+        # print(f"Start: {obj['start_angle']:0.2f} ({utils.degrees(obj['start_angle']):0.1f}º)")
+        # print(f"End: {obj['end_angle']:0.2f} ({utils.degrees(obj['end_angle']):0.1f}º)")
+        # print(f"Middle: {obj['middle_angle']:0.2f} ({utils.degrees(obj['middle_angle']):0.1f}º)")
+        # print(f"Samples: {obj['samples']}")
+        # print(f"Distance: {obj['distance']}")
+        # print()
+
 def calc_trilateration(data, last_state):
     # Remove outliers
     data = remove_outliers(data)
@@ -25,6 +36,8 @@ def calc_trilateration(data, last_state):
 
     # Get beacons
     beacons = get_beacons(objs_groups, last_state)
+
+    log_register(objs_groups, beacons, data)
 
     if len(beacons) < 3: raise Exception('There are not enough beacons')
 
@@ -64,14 +77,15 @@ def group_data(data):
 
     groups = []
     for _start, _end in ranges:
-        # _start to angle
-        _start = (_start * 360) // samples
-        _end = (_end * 360) // samples
+        start_angle_rad = utils.radians( _start/amr.LIDAR_RESOLUTION * 360 )
+        end_angle_rad   = utils.radians(   _end/amr.LIDAR_RESOLUTION * 360 )
+        sample_size = min(abs(_end-_start), samples-abs(_start-_end))
+        
         obj = {
-            'start': _start,
-            'end': _end,
-            'middle': ((_start+_end)//2)%360,
-            'size': abs(_end-_start),
+            'start_angle': start_angle_rad,
+            'end_angle': end_angle_rad,
+            'middle_angle': utils.circular_mean([start_angle_rad, end_angle_rad], normalize='2pi'),
+            'samples': sample_size,
             'distance': get_distance_group(data, _start, _end) + 0.055, #TODO magic number is equivalent to the beacon radius
             'data': data[_start:_end] if _start < _end else data[_start:] + data[:_end]
         }
@@ -99,22 +113,41 @@ def union_similar_objs(data, groups):
     groups = groups.copy()
 
     is_same_size = lambda i, j: abs(data[groups[i][1]-1]-data[groups[j][0]]) < LIMIT_DIFF_OBJECT
+    
     is_near = lambda i, j: j-i < LIMIT_GAP if i < j else len(data)-i+j < LIMIT_GAP
+
+    def is_same_group(i, j):
+        return is_same_size(i, j) and is_near(groups[i][1], groups[j][0])
+    def merge_groups(i, j):
+        groups[i] = (groups[i][0], groups[j][1])
+        groups.pop(j)
+
     i = 0
     while i < len(groups):
-        if is_same_size(i, (i+1)%len(groups)) and is_near(groups[i][1], groups[(i+1)%len(groups)][0]):
-            groups[i] = (groups[i][0], groups[(i+1)%len(groups)][1])
-            groups.pop((i+1)%len(groups))
+        j = (i+1)%len(groups)
+        if is_same_group(i, j):
+            merge_groups(i, j)
         else:
             i += 1
+
     return groups
 
 def get_distance_group(data, start, end):
-    return data[(start+end)//2]
+    return np.median(data[start:end]) if start < end else np.median(data[start:] + data[:end])
+    # return data[(start+end)//2]
 
 
 ##### GETTING BEACONS #####
+def print_beacons(beacons):
+    for key, beacon in beacons.items():
+        if not beacon: print(f"{key}: None")
+        else:
+            print(f"{key}: {beacon['x']:0.2f}, {beacon['y']:0.2f} {beacon['phi']:0.3f}({utils.degrees(beacon['phi']):0.1f}º) {beacon['distance']:0.2f}")
+
+
 def get_beacons(objs, last_state):
+    global objects, beacons
+    objects = objs.copy()
     last_beacons = calc_beacons(last_state)
 
     beacons = {
@@ -128,7 +161,7 @@ def get_beacons(objs, last_state):
     if not beacons['beacon2']: beacons['beacon2'] = last_beacons['beacon2']
     if not beacons['beacon3']: beacons['beacon3'] = last_beacons['beacon3']
     if not beacons['beacon4']: beacons['beacon4'] = last_beacons['beacon4']
-
+    
     return beacons
 
 def calc_beacons(state):
@@ -158,22 +191,9 @@ def calc_phi(trilateration, bx, by):
     # theta = trilateration['theta'] if trilateration['theta'] >= 0 else 360 + trilateration['theta']
     # theta = math.radians(theta)
 
-    phi = diff_angle(gamma, theta)
+    phi = utils.angle_diff(gamma, theta)
     phi = (phi + 2 * np.pi) % (2 * np.pi)
     return phi
-
-
-# Return the difference between two angles in radians (-pi, pi)
-def diff_angle(angle1, angle2):
-    diff = angle1 - angle2
-    
-    # Normalize the difference
-    if diff < -np.pi:
-        diff += 2 * np.pi
-    elif diff > np.pi:
-        diff -= 2 * np.pi
-    return diff
-
 
 def euclidean_distance(*args):
     if len(args) == 2:
@@ -190,17 +210,15 @@ def get_similar_beacon(objs, beacon):
 
     for obj in objs:
         possible_beacon = obj_to_beacon(obj, beacon)
-        if not possible_beacon: continue
 
-        error_distance = error_distance_beacon(possible_beacon['distance'])
-        error_phi = error_phi_beacon(possible_beacon['phi']) 
+        limit_error_distance = error_distance_beacon(possible_beacon['distance'])
+        limit_error_phi = error_phi_beacon(possible_beacon['phi']) 
 
         diff_distance = abs(possible_beacon['distance'] - beacon['distance'])
-        diff_phi = np.degrees(diff_angle(np.radians(possible_beacon['phi']), np.radians(beacon['phi'])))
-
-        if np.abs(diff_distance) < error_distance \
-            and np.abs(diff_phi) < error_phi:
-            possible_beacons_list.append(possible_beacon)    
+        diff_phi = utils.angle_diff(possible_beacon['phi'], beacon['phi'])
+        
+        if np.abs(diff_distance) < limit_error_distance and np.abs(diff_phi) < limit_error_phi:
+            possible_beacons_list.append(possible_beacon)
 
     if len(possible_beacons_list) == 1:
         return possible_beacons_list[0]
@@ -210,40 +228,31 @@ def get_similar_beacon(objs, beacon):
 
 #TODO: Improve this function
 def error_distance_beacon(distance):
-    return distance * 0.1
+    return distance * 0.15
 
 #TODO: Improve this function
 def error_phi_beacon(phi):
-    return np.radians(15) # 15 degrees in radians of error
+    return np.radians(15) # 20 degrees in radians of error
 
 def obj_to_beacon(obj, last_beacon):
-    phi = np.degrees(circular_mean([np.radians(obj['start']), np.radians(obj['end'])]))
-    phi_rad = np.radians(phi)
+    phi = obj['middle_angle']
     distance = calc_beacon_distance(obj['data'])
     
-    # check phi and distance are compatible
-    cos_phi = BEACON_RADIUS/distance
+    #TODO check phi and distance are compatible
+    # cos_phi = BEACON_RADIUS/distance
     # if abs(np.cos(phi_rad) - cos_phi) > 0.1: return None
 
     return {
         'x': last_beacon['x'],
         'y': last_beacon['y'],
-        'phi': phi_rad, # in radians
+        'phi': phi,
         'distance': distance,
     }
 
-
-def circular_mean(angles):
-    x = np.mean(np.cos(angles))
-    y = np.mean(np.sin(angles))
-    theta = np.arctan2(y, x)
-    theta_normalized = (theta + 2 * np.pi) % (2 * np.pi)
-    return theta_normalized
-
 #TODO: Improve this function
 def calc_beacon_distance(distances):
-    middle = len(distances) // 2
-    return distances[middle]+BEACON_RADIUS
+    distance = np.median(distances)
+    return distance+BEACON_RADIUS
 
 
 ##### GETTING POSITION #####
@@ -257,14 +266,6 @@ def calc_y(b1,b2):
 def calc_x(b1,b2):
     if 'distance' not in b1 or 'distance' not in b2: return None
     return (b1['distance']**2 - b2['distance']**2 + b2['x']**2 - b1['x']**2) / (2*b2['x'] - 2*b1['x'])
-
-#TODO Verify later, this function is not working properly
-def asin(x):
-    if x < -1: x = -1
-    if x > 1: x = 1
-    result = np.arcsin( x )
-    result = (result + 2 * np.pi) % (2 * np.pi)
-    return result
 
 def get_position(beacons):    
     x1 = calc_x(beacons['beacon2'], beacons['beacon3']) if 'beacon2' in beacons and 'beacon3' in beacons else None
@@ -305,49 +306,106 @@ def calc_theta(beacons):
     phi_4 = beacons['beacon4']['phi'] if 'phi' in beacons['beacon4'] else 0
 
     # diff phi between beacons
-    delta_12 = diff_angle(phi_2, phi_1)
-    delta_23 = diff_angle(phi_3, phi_2)
-    delta_34 = diff_angle(phi_4, phi_3)
-    delta_41 = diff_angle(phi_1, phi_4)
+    delta_12 = utils.angle_diff(phi_2, phi_1)
+    delta_23 = utils.angle_diff(phi_3, phi_2)
+    delta_34 = utils.angle_diff(phi_4, phi_3)
+    delta_41 = utils.angle_diff(phi_1, phi_4)
 
     # gamma
-    b1_gamma   =  (np.pi/2   + asin( np.sin(delta_12) * dist_2 / dist_12 ) ) % (2*np.pi)
-    b2_gamma   =  (np.pi     + asin( np.sin(delta_23) * dist_3 / dist_23 ) ) % (2*np.pi)
-    b3_gamma   =  (3*np.pi/2 + asin( np.sin(delta_34) * dist_4 / dist_34 ) ) % (2*np.pi)
-    b4_gamma   =  (            asin( np.sin(delta_41) * dist_1 / dist_41 ) ) % (2*np.pi)
-    b1_gamma_l =  (np.pi     - asin( np.sin(delta_41) * dist_4 / dist_41 ) + 2*np.pi) % (2*np.pi)
-    b2_gamma_l =  (3*np.pi/2 - asin( np.sin(delta_12) * dist_1 / dist_12 ) + 2*np.pi) % (2*np.pi)
-    b3_gamma_l =  (2*np.pi   - asin( np.sin(delta_23) * dist_2 / dist_23 ) + 2*np.pi) % (2*np.pi)
-    b4_gamma_l =  (np.pi/2   - asin( np.sin(delta_34) * dist_3 / dist_34 ) + 2*np.pi) % (2*np.pi)
+    b1_gamma   =  (np.pi/2   + utils.arcsin( np.sin(delta_12) * dist_2 / dist_12 ) ) % (2*np.pi)
+    b2_gamma   =  (np.pi     + utils.arcsin( np.sin(delta_23) * dist_3 / dist_23 ) ) % (2*np.pi)
+    b3_gamma   =  (3*np.pi/2 + utils.arcsin( np.sin(delta_34) * dist_4 / dist_34 ) ) % (2*np.pi)
+    b4_gamma   =  (            utils.arcsin( np.sin(delta_41) * dist_1 / dist_41 ) ) % (2*np.pi)
+    b1_gamma_l =  (np.pi     - utils.arcsin( np.sin(delta_41) * dist_4 / dist_41 ) + 2*np.pi) % (2*np.pi)
+    b2_gamma_l =  (3*np.pi/2 - utils.arcsin( np.sin(delta_12) * dist_1 / dist_12 ) + 2*np.pi) % (2*np.pi)
+    b3_gamma_l =  (2*np.pi   - utils.arcsin( np.sin(delta_23) * dist_2 / dist_23 ) + 2*np.pi) % (2*np.pi)
+    b4_gamma_l =  (np.pi/2   - utils.arcsin( np.sin(delta_34) * dist_3 / dist_34 ) + 2*np.pi) % (2*np.pi)
 
     # theta
-    b1_theta    = diff_angle(b1_gamma   , phi_1)
-    b2_theta    = diff_angle(b2_gamma   , phi_2)
-    b3_theta    = diff_angle(b3_gamma   , phi_3)
-    b4_theta    = diff_angle(b4_gamma   , phi_4)
-    b1_theta_l  = diff_angle(b1_gamma_l , phi_1)
-    b2_theta_l  = diff_angle(b2_gamma_l , phi_2)
-    b3_theta_l  = diff_angle(b3_gamma_l , phi_3)
-    b4_theta_l  = diff_angle(b4_gamma_l , phi_4)
+    b1_theta    = utils.angle_diff(b1_gamma   , phi_1)
+    b2_theta    = utils.angle_diff(b2_gamma   , phi_2)
+    b3_theta    = utils.angle_diff(b3_gamma   , phi_3)
+    b4_theta    = utils.angle_diff(b4_gamma   , phi_4)
+    b1_theta_l  = utils.angle_diff(b1_gamma_l , phi_1)
+    b2_theta_l  = utils.angle_diff(b2_gamma_l , phi_2)
+    b3_theta_l  = utils.angle_diff(b3_gamma_l , phi_3)
+    b4_theta_l  = utils.angle_diff(b4_gamma_l , phi_4)
     
     theta_list = [b1_theta, b2_theta, b3_theta, b4_theta, b1_theta_l, b2_theta_l, b3_theta_l, b4_theta_l]
 
-    theta = circular_mean(theta_list)
+    theta = utils.circular_mean(theta_list)
 
     # Normalize to [-np.pi, np.pi]
-    theta = (theta + 2 * np.pi) % (2 * np.pi)
-    if theta > np.pi:
-        theta = theta - 2 * np.pi
+    theta = utils.normalize_to_pi_radian(theta)
+
+    if np.isnan(theta): 
+        breakpoint()
 
     return theta
 
 
-def state2array(state):
-    return np.array([state['x'], state['y'], state['theta']*np.pi/180])
+#TODO DEBUG
 
-def array2state(array):
-    return {
-        'x': array[0],
-        'y': array[1],
-        'theta': array[2]*180/np.pi,
+def init_log(filename='trilateration.log'):
+    # delete the file if it exists
+    with open(filename, 'w') as f:
+        f.write('')  # Clear the file
+
+def log_register(objs, beacons, values, filename='trilateration.log'):
+    log_data = {
+        'objs': objs,
+        'beacons': beacons,
+        'values': values
     }
+
+    with open(filename, 'a') as f:
+        f.write(json.dumps(log_data) + '\n')
+
+
+# Generate a image with all objects detected
+def generate_image(objs, beacons):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    ax.set_xlim(-2, 2)
+    ax.set_ylim(-2, 2)
+
+    for obj in objs:
+        start_angle = obj['start_angle']
+        end_angle = obj['end_angle']
+        middle_angle = obj['middle_angle']
+        distance = obj['distance']
+
+        # Draw the object as a line
+        x_start = distance * np.cos(start_angle)
+        y_start = distance * np.sin(start_angle)
+        x_end = distance * np.cos(end_angle)
+        y_end = distance * np.sin(end_angle)
+
+        ax.plot([x_start, x_end], [y_start, y_end], 'r-')
+
+    for key, beacon in beacons.items():
+        if not beacon: continue
+        phi = beacon['phi']
+        distance = beacon['distance']
+
+        # Calculate the x and y coordinates of the beacon relative to the center (ignore x and y of the beacon)
+        x = distance * np.cos(phi)
+        y = distance * np.sin(phi)
+
+        # Draw the beacon as a point tinyer than the object
+        ax.plot(x, y, 'bo', markersize=2)
+
+        # Draw error circle
+        distance = error_distance_beacon(distance)
+        circle = plt.Circle((x, y), distance, color='g', fill=False)
+        ax.add_patch(circle)
+
+
+    # Plot current position with a red dot
+    ax.plot(0, 0, 'ro')
+    ax.set_aspect('equal', adjustable='box')
+
+    # plt.show()
+    plt.savefig('objs.png')
+    plt.close(fig)

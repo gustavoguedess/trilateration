@@ -1,4 +1,5 @@
 import numpy as np 
+import functions.utils as utils
 
 X = 0
 Y = 1
@@ -69,11 +70,13 @@ def predict(state, state_increment):
     # Predict the next state
     # x' = A*x + B*u
     predict_state = jacobian_matrix @ state + control_matrix @ state_increment
-    predict_state[2] = np.mod(predict_state[2] + 2*np.pi, 4*np.pi) - 2*np.pi # Normalize theta to [-2pi, 2pi]
+
+    #TODO check if this like is necessary
+    # predict_state[2] = utils.normalise_angle(predict_state[2]) # [0, 2pi]
 
     # Predict the next error covariance
     # P' = A*P*A.T + Q
-    error_covariance_predict = transiction_matrix @ error_covariance @ transiction_matrix.T + process_noise
+    error_covariance_predict = jacobian_matrix @ error_covariance @ jacobian_matrix.T + process_noise
 
     return predict_state
 
